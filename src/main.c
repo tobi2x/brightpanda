@@ -107,11 +107,72 @@ static void test_plugin_system(void) {
     log_info("Plugin system tests complete!\n");
 }
 
-/* Test Section 4: Full Integration with Manifest and Cache */
+/* Test Section 4: Full Integration with Incremental Manifest */
+
+// Set to track processed files
+typedef struct {
+    char** files;
+    size_t count;
+    size_t capacity;
+} FileSet;
+
+static FileSet* file_set_create(void) {
+    FileSet* set = malloc(sizeof(FileSet));
+    if (!set) return NULL;
+    
+    set->capacity = 100;
+    set->files = calloc(set->capacity, sizeof(char*));
+    set->count = 0;
+    
+    return set;
+}
+
+static void file_set_add(FileSet* set, const char* filepath) {
+    if (!set || !filepath) return;
+    
+    // Check if already exists
+    for (size_t i = 0; i < set->count; i++) {
+        if (strcmp(set->files[i], filepath) == 0) {
+            return;
+        }
+    }
+    
+    // Expand if needed
+    if (set->count >= set->capacity) {
+        set->capacity *= 2;
+        set->files = realloc(set->files, set->capacity * sizeof(char*));
+    }
+    
+    set->files[set->count++] = strdup(filepath);
+}
+
+static bool file_set_contains(FileSet* set, const char* filepath) {
+    if (!set || !filepath) return false;
+    
+    for (size_t i = 0; i < set->count; i++) {
+        if (strcmp(set->files[i], filepath) == 0) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+static void file_set_free(FileSet* set) {
+    if (!set) return;
+    
+    for (size_t i = 0; i < set->count; i++) {
+        free(set->files[i]);
+    }
+    free(set->files);
+    free(set);
+}
+
 typedef struct {
     Manifest* manifest;
     CacheManager* cache;
-    size_t files_processed;
+    FileSet* processed_files;
+    size_t files_parsed;
     size_t files_cached;
     size_t files_with_endpoints;
     size_t files_with_edges;
@@ -120,11 +181,20 @@ typedef struct {
 static void parse_and_collect_callback(const char* filepath, void* userdata) {
     ScanContext* ctx = (ScanContext*)userdata;
     
-    // Check cache first
+    // Track that we've seen this file
+    file_set_add(ctx->processed_files, filepath);
+    
+    // Check cache first - if unchanged, skip parsing but keep in manifest
     if (ctx->cache && !cache_is_file_changed(ctx->cache, filepath)) {
         ctx->files_cached++;
-        LOG_DEBUG("Skipping cached file: %s", filepath);
+        LOG_DEBUG("Using cached results for: %s", filepath);
         return;
+    }
+    
+    // File changed or not in cache - remove old entries and re-parse
+    if (ctx->cache) {
+        // Remove old entries for this file from manifest
+        manifest_remove_file(ctx->manifest, filepath);
     }
     
     // Get appropriate plugin
@@ -153,7 +223,7 @@ static void parse_and_collect_callback(const char* filepath, void* userdata) {
         return;
     }
     
-    ctx->files_processed++;
+    ctx->files_parsed++;
     
     // Update cache
     if (ctx->cache) {
@@ -210,13 +280,6 @@ static void test_full_scan(const char* root_path, const char* output_file, bool 
     // Get repo name from path
     const char* repo_name = path_basename(root_path);
     
-    // Create manifest
-    Manifest* manifest = manifest_create(repo_name);
-    if (!manifest) {
-        log_error("Failed to create manifest");
-        return;
-    }
-    
     // Initialize cache if enabled
     CacheManager* cache = NULL;
     if (use_cache) {
@@ -231,11 +294,40 @@ static void test_full_scan(const char* root_path, const char* output_file, bool 
         log_info("Cache disabled");
     }
     
+    // Load previous manifest if cache is enabled and manifest exists
+    Manifest* manifest = NULL;
+    if (use_cache && path_exists(output_file)) {
+        manifest = manifest_load_from_json(output_file);
+        if (manifest) {
+            log_info("Loaded previous manifest for incremental update");
+        }
+    }
+    
+    // Create new manifest if we couldn't load previous one
+    if (!manifest) {
+        manifest = manifest_create(repo_name);
+        if (!manifest) {
+            log_error("Failed to create manifest");
+            if (cache) cache_manager_free(cache);
+            return;
+        }
+    }
+    
+    // Create file set to track processed files
+    FileSet* processed_files = file_set_create();
+    if (!processed_files) {
+        log_error("Failed to create file set");
+        manifest_free(manifest);
+        if (cache) cache_manager_free(cache);
+        return;
+    }
+    
     // Create scan context
     ScanContext ctx = {
         .manifest = manifest,
         .cache = cache,
-        .files_processed = 0,
+        .processed_files = processed_files,
+        .files_parsed = 0,
         .files_cached = 0,
         .files_with_endpoints = 0,
         .files_with_edges = 0
@@ -265,9 +357,38 @@ static void test_full_scan(const char* root_path, const char* output_file, bool 
     
     if (!success) {
         log_error("✗ Scan failed");
+        file_set_free(processed_files);
         if (cache) cache_manager_free(cache);
         manifest_free(manifest);
         return;
+    }
+    
+    // Detect and remove deleted files from manifest
+    if (use_cache && manifest->services->count > 0) {
+        size_t removed = 0;
+        
+        // Check all files in all services
+        for (size_t i = 0; i < manifest->services->count; i++) {
+            Service* svc = manifest->services->items[i];
+            
+            for (size_t j = 0; j < svc->file_count; ) {
+                const char* file = svc->files[j];
+                
+                // If this file wasn't seen during the walk, it was deleted
+                if (!file_set_contains(processed_files, file)) {
+                    LOG_DEBUG("File deleted, removing from manifest: %s", file);
+                    manifest_remove_file(manifest, file);
+                    removed++;
+                    // Don't increment j, since we just removed an item
+                } else {
+                    j++;
+                }
+            }
+        }
+        
+        if (removed > 0) {
+            log_info("Removed %zu deleted files from manifest", removed);
+        }
     }
     
     // Set scan statistics
@@ -286,7 +407,7 @@ static void test_full_scan(const char* root_path, const char* output_file, bool 
     log_info("Files:");
     log_info("  Total scanned: %zu", stats.files_scanned);
     log_info("  Python files: %zu", stats.files_matched);
-    log_info("  Successfully parsed: %zu", ctx.files_processed);
+    log_info("  Successfully parsed: %zu", ctx.files_parsed);
     log_info("  Cached (skipped): %zu", ctx.files_cached);
     log_info("  With endpoints: %zu", ctx.files_with_endpoints);
     log_info("  With dependencies: %zu", ctx.files_with_edges);
@@ -354,6 +475,8 @@ static void test_full_scan(const char* root_path, const char* output_file, bool 
     
     log_info("\nFull scan complete!\n");
     
+    // Cleanup
+    file_set_free(processed_files);
     manifest_free(manifest);
 }
 

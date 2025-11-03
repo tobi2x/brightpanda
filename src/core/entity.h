@@ -170,5 +170,6 @@ typedef struct {
 EdgeList* edge_list_create(void);
 bool edge_list_add(EdgeList* list, Edge* edge);
 void edge_list_free(EdgeList* list);
+bool service_remove_file(Service* service, const char* filepath);
 
 #endif // BRIGHTPANDA_ENTITY_H

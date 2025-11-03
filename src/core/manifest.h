@@ -29,6 +29,9 @@ typedef struct {
 /* Create a new manifest */
 Manifest* manifest_create(const char* repo_name);
 
+/* Load manifest from JSON file */
+Manifest* manifest_load_from_json(const char* filepath);
+
 /* Add a service to the manifest */
 bool manifest_add_service(Manifest* manifest, Service* service);
 
@@ -47,6 +50,9 @@ bool manifest_write_json(Manifest* manifest, const char* output_path);
 
 /* Write manifest to JSON string (caller must free) */
 char* manifest_to_json_string(Manifest* manifest);
+
+/* Remove all entities associated with a specific file */
+bool manifest_remove_file(Manifest* manifest, const char* filepath);
 
 /* Free manifest */
 void manifest_free(Manifest* manifest);

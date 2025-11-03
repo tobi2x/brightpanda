@@ -223,6 +223,29 @@ Edge* edge_create(
     return edge;
 }
 
+bool service_remove_file(Service* service, const char* filepath) {
+    if (!service || !filepath) return false;
+    
+    for (size_t i = 0; i < service->file_count; i++) {
+        if (strcmp(service->files[i], filepath) == 0) {
+            // Found the file, remove it
+            free(service->files[i]);
+            
+            // Shift remaining files
+            for (size_t j = i; j < service->file_count - 1; j++) {
+                service->files[j] = service->files[j + 1];
+            }
+            
+            service->file_count--;
+            service->files[service->file_count] = NULL;
+            
+            return true;
+        }
+    }
+    
+    return false;
+}
+
 void edge_set_confidence(Edge* edge, float confidence) {
     if (!edge) return;
     if (confidence < 0.0f) confidence = 0.0f;

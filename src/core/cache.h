@@ -7,7 +7,7 @@
 
 /*
  * Cache manager - tracks file modification times and hashes
- * to skip parsing unchanged files on incremental scans.
+ * with LRU eviction policy when cache grows too large.
  */
 
 typedef struct {
@@ -15,12 +15,16 @@ typedef struct {
     time_t mtime;           // Last modification time
     uint32_t hash;          // File content hash (CRC32)
     size_t size;            // File size in bytes
+    time_t last_accessed;   // For LRU eviction
 } CacheEntry;
 
 typedef struct CacheManager CacheManager;
 
-/* Create a cache manager */
+/* Create a cache manager with optional size limit (0 = unlimited) */
 CacheManager* cache_manager_create(const char* cache_file);
+
+/* Set cache size limits (0 = unlimited) */
+void cache_set_limits(CacheManager* cache, size_t max_entries, size_t max_bytes);
 
 /* Load cache from disk */
 bool cache_manager_load(CacheManager* cache);
@@ -39,6 +43,9 @@ void cache_clear(CacheManager* cache);
 
 /* Get cache statistics */
 void cache_get_stats(CacheManager* cache, size_t* total_entries, size_t* hits, size_t* misses);
+
+/* Get cache size in bytes */
+size_t cache_get_size_bytes(CacheManager* cache);
 
 /* Free cache manager */
 void cache_manager_free(CacheManager* cache);
