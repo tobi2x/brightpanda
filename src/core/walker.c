@@ -77,7 +77,6 @@ static void walk_recursive(
     void* userdata,
     size_t current_depth
 ) {
-    // Check max depth
     if (config->max_depth > 0 && current_depth >= config->max_depth) {
         return;
     }

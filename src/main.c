@@ -5,6 +5,7 @@
 #include "core/entity.h"
 #include "core/walker.h"
 #include "core/manifest.h"
+#include "core/cache.h"
 #include "lang/plugin.h"
 #include "util/logger.h"
 #include "util/path.h"
@@ -106,16 +107,25 @@ static void test_plugin_system(void) {
     log_info("Plugin system tests complete!\n");
 }
 
-/* Test Section 4: Full Integration with Manifest */
+/* Test Section 4: Full Integration with Manifest and Cache */
 typedef struct {
     Manifest* manifest;
+    CacheManager* cache;
     size_t files_processed;
+    size_t files_cached;
     size_t files_with_endpoints;
     size_t files_with_edges;
 } ScanContext;
 
 static void parse_and_collect_callback(const char* filepath, void* userdata) {
     ScanContext* ctx = (ScanContext*)userdata;
+    
+    // Check cache first
+    if (ctx->cache && !cache_is_file_changed(ctx->cache, filepath)) {
+        ctx->files_cached++;
+        LOG_DEBUG("Skipping cached file: %s", filepath);
+        return;
+    }
     
     // Get appropriate plugin
     LanguagePlugin* plugin = plugin_registry_get_for_file(filepath);
@@ -144,6 +154,11 @@ static void parse_and_collect_callback(const char* filepath, void* userdata) {
     }
     
     ctx->files_processed++;
+    
+    // Update cache
+    if (ctx->cache) {
+        cache_update_file(ctx->cache, filepath);
+    }
     
     // Add service to manifest
     if (result->service) {
@@ -187,7 +202,7 @@ static void parse_and_collect_callback(const char* filepath, void* userdata) {
     parse_result_free(result);
 }
 
-static void test_full_scan(const char* root_path, const char* output_file) {
+static void test_full_scan(const char* root_path, const char* output_file, bool use_cache) {
     log_info("========================================");
     log_info("Full Repository Scan");
     log_info("========================================");
@@ -202,10 +217,26 @@ static void test_full_scan(const char* root_path, const char* output_file) {
         return;
     }
     
+    // Initialize cache if enabled
+    CacheManager* cache = NULL;
+    if (use_cache) {
+        cache = cache_manager_create(".brightcache");
+        if (cache) {
+            cache_manager_load(cache);
+            log_info("Cache enabled");
+        } else {
+            log_warn("Failed to create cache manager, continuing without cache");
+        }
+    } else {
+        log_info("Cache disabled");
+    }
+    
     // Create scan context
     ScanContext ctx = {
         .manifest = manifest,
+        .cache = cache,
         .files_processed = 0,
+        .files_cached = 0,
         .files_with_endpoints = 0,
         .files_with_edges = 0
     };
@@ -234,6 +265,7 @@ static void test_full_scan(const char* root_path, const char* output_file) {
     
     if (!success) {
         log_error("✗ Scan failed");
+        if (cache) cache_manager_free(cache);
         manifest_free(manifest);
         return;
     }
@@ -255,6 +287,7 @@ static void test_full_scan(const char* root_path, const char* output_file) {
     log_info("  Total scanned: %zu", stats.files_scanned);
     log_info("  Python files: %zu", stats.files_matched);
     log_info("  Successfully parsed: %zu", ctx.files_processed);
+    log_info("  Cached (skipped): %zu", ctx.files_cached);
     log_info("  With endpoints: %zu", ctx.files_with_endpoints);
     log_info("  With dependencies: %zu", ctx.files_with_edges);
     log_info("  Ignored: %zu", stats.files_ignored);
@@ -268,6 +301,21 @@ static void test_full_scan(const char* root_path, const char* output_file) {
     log_info("  Endpoints: %zu", manifest->endpoints->count);
     log_info("  Dependencies: %zu", manifest->edges->count);
     log_info("");
+    
+    // Show cache statistics
+    if (cache) {
+        size_t total_entries, hits, misses;
+        cache_get_stats(cache, &total_entries, &hits, &misses);
+        
+        log_info("Cache Statistics:");
+        log_info("  Total entries: %zu", total_entries);
+        log_info("  Cache hits: %zu", hits);
+        log_info("  Cache misses: %zu", misses);
+        if (hits + misses > 0) {
+            log_info("  Hit rate: %.1f%%", hits * 100.0 / (hits + misses));
+        }
+        log_info("");
+    }
     
     // Show top services by endpoint count
     if (manifest->services->count > 0) {
@@ -288,6 +336,12 @@ static void test_full_scan(const char* root_path, const char* output_file) {
                      i + 1, svc->name, svc->language, svc->file_count, endpoint_count);
         }
         log_info("");
+    }
+    
+    // Save cache
+    if (cache) {
+        cache_manager_save(cache);
+        cache_manager_free(cache);
     }
     
     // Write manifest to JSON file
@@ -311,22 +365,35 @@ int main(int argc, char** argv) {
     log_info("Code Architecture Analyzer");
     log_info("========================================\n");
     
-    if (argc < 2) {
-        log_error("Usage: %s <directory> [output_file]", argv[0]);
+    bool use_cache = true;  // ON by default
+    const char* root_path = NULL;
+    const char* output_file = "manifest.json";
+    
+    // Parse arguments
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--no-cache") == 0) {
+            use_cache = false;
+        } else if (strcmp(argv[i], "--output") == 0 && i + 1 < argc) {
+            output_file = argv[++i];
+        } else if (!root_path) {
+            root_path = argv[i];
+        }
+    }
+    
+    if (!root_path) {
+        log_error("Usage: %s <directory> [--no-cache] [--output <file>]", argv[0]);
         log_info("Example: %s /path/to/project", argv[0]);
-        log_info("Example: %s /path/to/project manifest.json", argv[0]);
+        log_info("Example: %s /path/to/project --no-cache", argv[0]);
+        log_info("Example: %s /path/to/project --output results.json", argv[0]);
         logger_shutdown();
         return 1;
     }
-    
-    const char* root_path = argv[1];
-    const char* output_file = argc >= 3 ? argv[2] : "manifest.json";
     
     // Run all tests in sequence
     test_entity_system();
     test_walker_system(root_path);
     test_plugin_system();
-    test_full_scan(root_path, output_file);
+    test_full_scan(root_path, output_file, use_cache);
     
     // Summary
     log_info("========================================");

@@ -47,6 +47,7 @@ set(CORE_SOURCES
     src/core/walker.c
     src/core/parser_pool.c
     src/core/extractor.c
+    src/core/cache.c
 )
 
 set(LANG_SOURCES
