@@ -36,7 +36,35 @@ bool manifest_add_service(Manifest* manifest, Service* service) {
 
 bool manifest_add_endpoint(Manifest* manifest, Endpoint* endpoint) {
     if (!manifest || !endpoint) return false;
-    return endpoint_list_add(manifest->endpoints, endpoint);
+
+    for (size_t i = 0; i < manifest->endpoints->count; i++) {
+        Endpoint* existing = manifest->endpoints->items[i];
+
+        // same service + handler + path  → duplicate
+        if (strcmp(existing->service_name, endpoint->service_name) == 0 &&
+            strcmp(existing->handler, endpoint->handler) == 0 &&
+            strcmp(existing->path, endpoint->path) == 0) {
+
+            // Prefer the non-GET version if both exist
+            if (existing->method == HTTP_GET && endpoint->method != HTTP_GET) {
+                existing->method = endpoint->method;
+                LOG_DEBUG("Merged duplicate route %s %s -> %s() (kept non-GET)",
+                          http_method_to_string(existing->method),
+                          existing->path, existing->handler);
+            } else {
+                LOG_DEBUG("Skipping duplicate route %s %s -> %s()",
+                          http_method_to_string(endpoint->method),
+                          endpoint->path, endpoint->handler);
+            }
+
+            endpoint_free(endpoint);
+            return false;
+        }
+    }
+
+    // Unique → add to list
+    endpoint_list_add(manifest->endpoints, endpoint);
+    return true;
 }
 
 bool manifest_add_edge(Manifest* manifest, Edge* edge) {

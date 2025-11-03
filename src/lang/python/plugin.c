@@ -259,50 +259,59 @@ static ParseResult* python_parse_file(const char* filepath, const char* service_
 
 static void extract_route_match(TSQueryMatch match, TSQuery* query, const char* source, void* userdata) {
     RouteContext* ctx = (RouteContext*)userdata;
-    
+
     TSNode route_path_node, handler_node;
-    
+
     // Find captures by name
     bool has_path = extractor_find_capture(match, query, "route.path", &route_path_node) ||
                     extractor_find_capture(match, query, "fastapi.path", &route_path_node);
-    
+
     bool has_handler = extractor_find_capture(match, query, "route.handler", &handler_node) ||
                        extractor_find_capture(match, query, "fastapi.handler", &handler_node);
-    
+
     if (!has_path || !has_handler) return;
-    
+
     // Get path and handler text
     char* path = extractor_get_node_text(route_path_node, source);
     char* handler = extractor_get_node_text(handler_node, source);
-    
+
     if (!path || !handler) {
         free(path);
         free(handler);
         return;
     }
-    
+
     // Strip quotes from path
     char* clean_path = extractor_strip_quotes(path);
     free(path);
-    
-    // Create endpoint
+
+    // ─────────────────────────────────────────────
+    // NEW: Extract HTTP method dynamically
+    // ─────────────────────────────────────────────
+    char* method_str = extractor_get_http_method(match, query, source);
+    HttpMethod method_enum = http_method_from_string(method_str);
+    free(method_str);
+
+    if (strstr(clean_path, "startup") || strstr(clean_path, "shutdown")) return;
+
+    // Create endpoint with actual method
     Endpoint* endpoint = endpoint_create(
         ctx->service_name ? ctx->service_name : "unknown",
         clean_path,
-        HTTP_GET,  // Default, would need more logic to detect actual method
+        method_enum,
         handler,
         path_basename(ctx->result->service->path),
         ts_node_start_point(handler_node).row + 1
     );
-    
+
     if (endpoint) {
         endpoint_list_add(ctx->result->endpoints, endpoint);
-        LOG_DEBUG("Found endpoint: %s %s -> %s()", 
-                 http_method_to_string(endpoint->method), 
-                 endpoint->path, 
-                 endpoint->handler);
+        LOG_DEBUG("Found endpoint: %s %s -> %s()",
+                  http_method_to_string(endpoint->method),
+                  endpoint->path,
+                  endpoint->handler);
     }
-    
+
     free(clean_path);
     free(handler);
 }

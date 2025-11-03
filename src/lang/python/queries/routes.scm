@@ -1,3 +1,4 @@
+; ─────────────────────────────────────────────
 ; Flask routes: @app.route('/path')
 (decorated_definition
   (decorator
@@ -10,7 +11,7 @@
   definition: (function_definition
     name: (identifier) @route.handler))
 
-; Flask with methods: @app.route('/path', methods=['POST'])
+; Flask with methods: @app.route('/path', methods=['POST', 'PUT'])
 (decorated_definition
   (decorator
     (call
@@ -22,11 +23,11 @@
         (keyword_argument
           name: (identifier) @methods.keyword
           value: (list
-            (string) @route.method))))) @route.with.methods
+            (string) @route.method)))) ) @route.with.methods
   definition: (function_definition
     name: (identifier) @route.handler))
 
-; FastAPI routes: @app.get('/path')
+; FastAPI routes: @app.get('/path'), @app.post('/path'), etc.
 (decorated_definition
   (decorator
     (call

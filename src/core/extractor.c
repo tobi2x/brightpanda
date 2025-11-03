@@ -2,6 +2,7 @@
 #include "../util/logger.h"
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h> 
 
 bool extractor_execute_query(
     TSQuery* query,
@@ -107,4 +108,38 @@ char* extractor_strip_quotes(const char* str) {
     }
     
     return strdup(str);
+}
+
+/**
+ * Extracts HTTP method from a query match.
+ * Supports Flask (methods keyword) and FastAPI (decorator method)
+ * Defaults to "GET" if nothing found.
+ */
+char* extractor_get_http_method(TSQueryMatch match, TSQuery* query, const char* source) {
+    TSNode node;
+    char* raw = NULL;
+
+    // Case 1: FastAPI - @app.post("/...")
+    if (extractor_find_capture(match, query, "fastapi.method", &node)) {
+        raw = extractor_get_node_text(node, source);
+        if (raw) {
+            // .post -> POST
+            for (char* p = raw; *p; ++p) *p = toupper(*p);
+            return raw;
+        }
+    }
+
+    // Case 2: Flask - methods=['POST']
+    if (extractor_find_capture(match, query, "route.method", &node)) {
+        raw = extractor_get_node_text(node, source);
+        if (raw) {
+            char* clean = extractor_strip_quotes(raw);
+            free(raw);
+            for (char* p = clean; *p; ++p) *p = toupper(*p);
+            return clean;
+        }
+    }
+
+    // Default to GET
+    return strdup("GET");
 }

@@ -56,4 +56,12 @@ bool extractor_find_capture(
 /* Strip quotes from a string literal */
 char* extractor_strip_quotes(const char* str);
 
+/* Extract HTTP method (GET/POST/PUT/DELETE...) from match or default to GET */
+char* extractor_get_http_method(
+    TSQueryMatch match,
+    TSQuery* query,
+    const char* source
+);
+
+
 #endif // BRIGHTPANDA_EXTRACTOR_H
