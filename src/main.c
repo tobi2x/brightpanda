@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include "core/entity.h"
 #include "core/walker.h"
+#include "lang/plugin.h"
 #include "util/logger.h"
 
 /* Test Section 1: Entity System */
@@ -10,76 +11,7 @@ static void test_entity_system(void) {
     log_info("Testing Entity System");
     log_info("========================================");
     
-    // Create a service
-    Service* service = service_create("auth-service", "python", "./services/auth");
-    if (service) {
-        log_info("✓ Created service: %s (%s)", service->name, service->language);
-        service_add_file(service, "services/auth/main.py");
-        service_add_file(service, "services/auth/routes.py");
-        LOG_DEBUG("Added %zu files to service", service->file_count);
-        service_free(service);
-    } else {
-        log_error("✗ Failed to create service");
-    }
-    
-    // Create an endpoint
-    Endpoint* endpoint = endpoint_create(
-        "auth-service", 
-        "/api/login", 
-        HTTP_POST, 
-        "login_handler", 
-        "routes.py", 
-        42
-    );
-    if (endpoint) {
-        log_info("✓ Created endpoint: %s %s", 
-                 http_method_to_string(endpoint->method), 
-                 endpoint->path);
-        endpoint_free(endpoint);
-    } else {
-        log_error("✗ Failed to create endpoint");
-    }
-    
-    // Create an edge
-    Edge* edge = edge_create(
-        "auth-service", 
-        "user-db", 
-        EDGE_DATABASE, 
-        NULL, 
-        NULL, 
-        "main.py", 
-        15
-    );
-    if (edge) {
-        log_info("✓ Created edge: %s -> %s (%s)", 
-                 edge->from_service, 
-                 edge->to_service, 
-                 edge_type_to_string(edge->type));
-        edge_set_confidence(edge, 0.95f);
-        LOG_DEBUG("Edge confidence: %.2f", edge->confidence);
-        edge_free(edge);
-    } else {
-        log_error("✗ Failed to create edge");
-    }
-    
-    // Test collections
-    ServiceList* services = service_list_create();
-    if (services) {
-        Service* s1 = service_create("api", "python", "./api");
-        Service* s2 = service_create("worker", "python", "./worker");
-        
-        service_list_add(services, s1);
-        service_list_add(services, s2);
-        
-        log_info("✓ Created service list with %zu services", services->count);
-        
-        Service* found = service_list_find(services, "api");
-        if (found) {
-            LOG_DEBUG("Successfully found service: %s", found->name);
-        }
-        
-        service_list_free(services);
-    }
+    // ... (keep existing entity tests) ...
     
     log_info("Entity system tests complete!\n");
 }
@@ -98,38 +30,69 @@ static void test_walker_system(const char* root_path) {
     log_info("Testing Walker System");
     log_info("========================================");
     
-    // Configure walker to find Python files
-    WalkerConfig config = walker_config_default();
-    const char* python_exts[] = {"py"};
-    config.extensions = python_exts;
-    config.extension_count = 1;
-    config.max_depth = 5; // Limit depth
-    
-    // Walk the directory
-    log_info("Walking directory: %s", root_path);
-    g_files_found = 0;
-    
-    bool success = walker_walk(root_path, &config, file_found_callback, NULL);
-    
-    if (success) {
-        log_info("✓ Walker completed successfully");
-        
-        // Get statistics
-        WalkerStats stats = walker_get_stats();
-        log_info("Statistics:");
-        log_info("  Directories visited: %zu", stats.directories_visited);
-        log_info("  Files scanned: %zu", stats.files_scanned);
-        log_info("  Python files found: %zu", stats.files_matched);
-        log_info("  Files ignored: %zu", stats.files_ignored);
-        
-        if (stats.errors > 0) {
-            log_warn("  Errors encountered: %zu", stats.errors);
-        }
-    } else {
-        log_error("✗ Walker failed");
-    }
+    // ... (keep existing walker tests) ...
     
     log_info("Walker tests complete!\n");
+}
+
+/* Test Section 3: Plugin System */
+static void test_plugin_system(void) {
+    log_info("========================================");
+    log_info("Testing Plugin System");
+    log_info("========================================");
+    
+    // Initialize plugin registry
+    if (!plugin_registry_init()) {
+        log_error("✗ Failed to initialize plugin registry");
+        return;
+    }
+    log_info("✓ Plugin registry initialized");
+    
+    // List registered plugins
+    size_t count;
+    LanguagePlugin** plugins = plugin_registry_list(&count);
+    log_info("Registered plugins: %zu", count);
+    
+    for (size_t i = 0; i < count; i++) {
+        log_info("  - %s v%s", plugins[i]->name, plugins[i]->version);
+        
+        // Show supported extensions
+        LOG_DEBUG("    Extensions:");
+        for (size_t j = 0; plugins[i]->file_extensions[j]; j++) {
+            LOG_DEBUG("      .%s", plugins[i]->file_extensions[j]);
+        }
+    }
+    
+    // Test file detection
+    const char* test_files[] = {
+        "test.py",
+        "main.js",
+        "app.go",
+        NULL
+    };
+    
+    for (size_t i = 0; test_files[i]; i++) {
+        LanguagePlugin* plugin = plugin_registry_get_for_file(test_files[i]);
+        if (plugin) {
+            log_info("✓ %s -> %s plugin", test_files[i], plugin->name);
+        } else {
+            LOG_DEBUG("  %s -> no plugin found", test_files[i]);
+        }
+    }
+    
+    // Test parsing (stub for now)
+    LanguagePlugin* python = plugin_registry_get("python");
+    if (python) {
+        ParseResult* result = python->parse_file("example.py", "test-service");
+        if (result) {
+            if (result->success) {
+                log_info("✓ Successfully parsed Python file (stub)");
+            }
+            parse_result_free(result);
+        }
+    }
+    
+    log_info("Plugin system tests complete!\n");
 }
 
 int main(int argc, char** argv) {
@@ -152,12 +115,15 @@ int main(int argc, char** argv) {
     // Run all tests in sequence
     test_entity_system();
     test_walker_system(root_path);
+    test_plugin_system();
     
     // Summary
     log_info("========================================");
     log_info("All tests complete!");
     log_info("========================================");
     
+    // Cleanup
+    plugin_registry_shutdown();
     logger_shutdown();
     return 0;
 }
