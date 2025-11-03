@@ -85,13 +85,15 @@ const char* http_method_to_string(HttpMethod method);
 /* ===== EDGE (Dependency) ===== */
 
 typedef enum {
-    EDGE_HTTP_CALL,      // HTTP client request
-    EDGE_IMPORT,         // Module import
-    EDGE_RPC,            // RPC call
-    EDGE_DATABASE,       // Database connection
-    EDGE_MESSAGE_QUEUE,  // Message queue publish/subscribe
-    EDGE_UNKNOWN
+    EDGE_HTTP_CALL,       // HTTP client request (requests, httpx, etc.)
+    EDGE_IMPORT,          // Module import
+    EDGE_RPC,             // RPC call
+    EDGE_DATABASE,        // Database connection
+    EDGE_MESSAGE_QUEUE,   // Message queue publish/subscribe
+    EDGE_INTERNAL_CALL,   // Internal service-to-service call (e.g. user_service.get_user())
+    EDGE_UNKNOWN          // Fallback / unspecified
 } EdgeType;
+
 
 typedef struct {
     char* from_service;   // Source service making the call

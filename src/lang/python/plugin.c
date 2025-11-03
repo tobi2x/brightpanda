@@ -80,6 +80,28 @@ LanguagePlugin* python_plugin_create(void) {
     return &python_plugin;
 }
 
+
+static inline bool is_http_method(const char* s) {
+    return s &&
+      (!strcmp(s,"get") || !strcmp(s,"post") || !strcmp(s,"put") ||
+       !strcmp(s,"delete") || !strcmp(s,"patch") || !strcmp(s,"head") || !strcmp(s,"options"));
+}
+
+static inline bool is_http_lib(const char* s) {
+    return s &&
+      (!strcmp(s,"requests") || !strcmp(s,"httpx") || !strcmp(s,"aiohttp") ||
+       !strcmp(s,"session")  || !strcmp(s,"client"));
+}
+
+static inline bool is_std_or_data_lib(const char* s) {
+    return s &&
+      (!strcmp(s,"re") || !strcmp(s,"os") || !strcmp(s,"sys") || !strcmp(s,"json") ||
+       !strcmp(s,"logging") || !strcmp(s,"logger") ||
+       !strcmp(s,"pathlib") || !strcmp(s,"Path") ||
+       !strcmp(s,"pd") || !strcmp(s,"pandas") || !strcmp(s,"np") || !strcmp(s,"numpy") ||
+       !strcmp(s,"rich") || !strcmp(s,"Table") || !strcmp(s,"Console"));
+}
+
 static bool python_init(void) {
     if (python_state.initialized) {
         return true;
@@ -285,9 +307,6 @@ static void extract_route_match(TSQueryMatch match, TSQuery* query, const char* 
     char* clean_path = extractor_strip_quotes(path);
     free(path);
 
-    // ─────────────────────────────────────────────
-    // NEW: Extract HTTP method dynamically
-    // ─────────────────────────────────────────────
     char* method_str = extractor_get_http_method(match, query, source);
     HttpMethod method_enum = http_method_from_string(method_str);
     free(method_str);
@@ -318,55 +337,166 @@ static void extract_route_match(TSQueryMatch match, TSQuery* query, const char* 
 
 static void extract_call_match(TSQueryMatch match, TSQuery* query, const char* source, void* userdata) {
     CallContext* ctx = (CallContext*)userdata;
-    
-    TSNode lib_node, method_node, url_node;
-    
-    // Find HTTP client calls
-    bool has_lib = extractor_find_capture(match, query, "http.client.lib", &lib_node);
-    bool has_method = extractor_find_capture(match, query, "http.client.method", &method_node);
-    bool has_url = extractor_find_capture(match, query, "http.client.url", &url_node);
-    
-    if (!has_lib || !has_method || !has_url) return;
-    
-    // Get text
-    char* lib = extractor_get_node_text(lib_node, source);
-    char* method = extractor_get_node_text(method_node, source);
-    char* url = extractor_get_node_text(url_node, source);
-    
-    if (!lib || !method || !url) {
+    TSNode lib_node, method_node, url_node, obj_node, attr_node;
+
+    bool has_lib = extractor_find_capture(match, query, "http.client.lib", &lib_node) ||
+                   extractor_find_capture(match, query, "http.session.obj", &lib_node) ||
+                   extractor_find_capture(match, query, "async.http.client", &lib_node);
+
+    bool has_method = extractor_find_capture(match, query, "http.client.method", &method_node) ||
+                      extractor_find_capture(match, query, "http.session.method", &method_node) ||
+                      extractor_find_capture(match, query, "async.http.method", &method_node);
+
+    bool has_url = extractor_find_capture(match, query, "http.client.url", &url_node) ||
+                   extractor_find_capture(match, query, "http.session.url", &url_node) ||
+                   extractor_find_capture(match, query, "async.http.url", &url_node);
+
+    bool has_obj = extractor_find_capture(match, query, "service.call.object", &obj_node);
+    bool has_attr = extractor_find_capture(match, query, "service.call.method", &attr_node);
+
+    // -----------------------
+    // 1. Handle HTTP client calls (requests, httpx, aiohttp)
+    // -----------------------
+    if (has_lib && has_method && has_url) {
+        char* lib = extractor_get_node_text(lib_node, source);
+        char* method = extractor_get_node_text(method_node, source);
+        char* url = extractor_get_node_text(url_node, source);
+
+        if (lib && method && url && is_http_lib(lib) && is_http_method(method)) {
+            char* clean_url = extractor_strip_quotes(url);
+
+            Edge* edge = edge_create(
+                ctx->service_name ? ctx->service_name : "unknown",
+                clean_url,
+                EDGE_HTTP_CALL,
+                method,
+                clean_url,
+                path_basename(ctx->result->service->path),
+                ts_node_start_point(lib_node).row + 1
+            );
+
+            if (edge) {
+                edge_set_confidence(edge, 0.9f);
+                edge_list_add(ctx->result->edges, edge);
+                LOG_DEBUG("HTTP: %s.%s(%s)", lib, method, clean_url);
+            }
+
+            free(clean_url);
+        }
+
         free(lib);
         free(method);
         free(url);
         return;
     }
-    
-    // Check if it's a known HTTP library
-    if (strcmp(lib, "requests") == 0 || strcmp(lib, "httpx") == 0) {
-        char* clean_url = extractor_strip_quotes(url);
-        
-        Edge* edge = edge_create(
-            ctx->service_name ? ctx->service_name : "unknown",
-            clean_url,
-            EDGE_HTTP_CALL,
-            method,
-            clean_url,
-            path_basename(ctx->result->service->path),
-            ts_node_start_point(lib_node).row + 1
-        );
-        
-        if (edge) {
-            edge_set_confidence(edge, 0.8f);
-            edge_list_add(ctx->result->edges, edge);
-            LOG_DEBUG("Found HTTP call: %s.%s(%s)", lib, method, clean_url);
+
+    // -----------------------
+    // 2. Handle internal service-style calls (repo.save(), email_client.send())
+    // -----------------------
+    if (has_obj && has_attr) {
+        char* obj = extractor_get_node_text(obj_node, source);
+        char* attr = extractor_get_node_text(attr_node, source);
+
+        if (obj && attr && !is_std_or_data_lib(obj)) {
+            Edge* edge = edge_create(
+                ctx->service_name ? ctx->service_name : "unknown",
+                obj,
+                EDGE_INTERNAL_CALL,
+                "CALL",
+                attr,
+                path_basename(ctx->result->service->path),
+                ts_node_start_point(obj_node).row + 1
+            );
+
+            if (edge) {
+                edge_set_confidence(edge, 0.6f);
+                edge_list_add(ctx->result->edges, edge);
+                LOG_DEBUG("INTERNAL: %s.%s()", obj, attr);
+            }
         }
-        
-        free(clean_url);
+
+        free(obj);
+        free(attr);
+        return;
     }
-    
-    free(lib);
-    free(method);
-    free(url);
+
+    // -----------------------
+    // 3. Database calls (cursor.execute, session.query)
+    // -----------------------
+    TSNode db_obj_node, db_method_node, db_query_node;
+    bool has_db_obj = extractor_find_capture(match, query, "db.call.object", &db_obj_node);
+    bool has_db_method = extractor_find_capture(match, query, "db.call.method", &db_method_node);
+    bool has_db_query = extractor_find_capture(match, query, "db.call.query", &db_query_node);
+
+    if (has_db_obj && has_db_method) {
+        char* obj = extractor_get_node_text(db_obj_node, source);
+        char* method = extractor_get_node_text(db_method_node, source);
+        char* query_str = has_db_query ? extractor_get_node_text(db_query_node, source) : NULL;
+
+        if (obj && method) {
+            Edge* edge = edge_create(
+                ctx->service_name ? ctx->service_name : "unknown",
+                obj,
+                EDGE_DATABASE,
+                method,
+                query_str ? query_str : "(unknown SQL)",
+                path_basename(ctx->result->service->path),
+                ts_node_start_point(db_obj_node).row + 1
+            );
+
+            if (edge) {
+                edge_set_confidence(edge, 0.8f);
+                edge_list_add(ctx->result->edges, edge);
+                LOG_DEBUG("DB: %s.%s()", obj, method);
+            }
+        }
+
+        free(obj);
+        free(method);
+        free(query_str);
+        return;
+    }
+
+    // -----------------------
+    // 4. Message queue calls (producer.publish, kafka.send)
+    // -----------------------
+    TSNode mq_obj_node, mq_method_node;
+    bool has_mq_obj = extractor_find_capture(match, query, "mq.call.object", &mq_obj_node);
+    bool has_mq_method = extractor_find_capture(match, query, "mq.call.method", &mq_method_node);
+
+    if (has_mq_obj && has_mq_method) {
+        char* obj = extractor_get_node_text(mq_obj_node, source);
+        char* method = extractor_get_node_text(mq_method_node, source);
+
+        if (obj && method) {
+            Edge* edge = edge_create(
+                ctx->service_name ? ctx->service_name : "unknown",
+                obj,
+                EDGE_MESSAGE_QUEUE,
+                method,
+                "(message)",
+                path_basename(ctx->result->service->path),
+                ts_node_start_point(mq_obj_node).row + 1
+            );
+
+            if (edge) {
+                edge_set_confidence(edge, 0.8f);
+                edge_list_add(ctx->result->edges, edge);
+                LOG_DEBUG("MQ: %s.%s()", obj, method);
+            }
+        }
+
+        free(obj);
+        free(method);
+        return;
+    }
+
+    // -----------------------
+    // 5. Fallback (no meaningful match)
+    // -----------------------
+    LOG_DEBUG("Unrecognized call pattern at line %u", ts_node_start_point(match.captures[0].node).row + 1);
 }
+
 
 static void extract_import_match(TSQueryMatch match, TSQuery* query, const char* source, void* userdata) {
     ImportContext* ctx = (ImportContext*)userdata;
