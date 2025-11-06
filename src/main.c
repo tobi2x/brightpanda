@@ -481,7 +481,8 @@ static void test_full_scan(const char* root_path, const char* output_file, bool 
 }
 
 int main(int argc, char** argv) {
-    logger_init(LOG_LEVEL_INFO, LOG_OUTPUT_STDOUT, NULL);
+    LogLevel log_level = LOG_LEVEL_INFO;
+    
     
     log_info("========================================");
     log_info("Brightpanda v1.0.0");
@@ -492,22 +493,31 @@ int main(int argc, char** argv) {
     const char* root_path = NULL;
     const char* output_file = "manifest.json";
     
-    // Parse arguments
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--no-cache") == 0) {
             use_cache = false;
+        } else if (strcmp(argv[i], "--verbose") == 0 || strcmp(argv[i], "-v") == 0) {
+            log_level = LOG_LEVEL_DEBUG;
         } else if (strcmp(argv[i], "--output") == 0 && i + 1 < argc) {
             output_file = argv[++i];
         } else if (!root_path) {
             root_path = argv[i];
         }
     }
+
+    logger_init(log_level, LOG_OUTPUT_STDOUT, NULL);
+
     
     if (!root_path) {
-        log_error("Usage: %s <directory> [--no-cache] [--output <file>]", argv[0]);
-        log_info("Example: %s /path/to/project", argv[0]);
-        log_info("Example: %s /path/to/project --no-cache", argv[0]);
-        log_info("Example: %s /path/to/project --output results.json", argv[0]);
+        log_error("Usage: %s <directory> [OPTIONS]", argv[0]);
+        log_info("\nOptions:");
+        log_info("  --no-cache          Disable caching (force full scan)");
+        log_info("  --verbose, -v       Enable verbose debug logging");
+        log_info("  --output <file>     Specify output file (default: manifest.json)");
+        log_info("\nExamples:");
+        log_info("  %s /path/to/project", argv[0]);
+        log_info("  %s /path/to/project --verbose", argv[0]);
+        log_info("  %s /path/to/project --no-cache --output results.json", argv[0]);
         logger_shutdown();
         return 1;
     }
