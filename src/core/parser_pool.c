@@ -3,20 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* External Tree-sitter language declarations */
-extern const TSLanguage *tree_sitter_python(void);
-
-/* Pool state */
-#define MAX_PARSERS 8
-
-static struct {
-    TSParser* parsers[MAX_PARSERS];
-    bool in_use[MAX_PARSERS];
-    const TSLanguage* language;
-    size_t count;
-    bool initialized;
-} pool_state = {0};
-
 bool parser_pool_init(void) {
     if (pool_state.initialized) {
         return true;

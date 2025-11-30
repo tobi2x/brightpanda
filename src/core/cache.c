@@ -5,10 +5,6 @@
 #include <sys/stat.h>
 #include <stdio.h>
 
-#define CACHE_VERSION 1
-#define DEFAULT_MAX_ENTRIES 50000     // 50k files
-#define DEFAULT_MAX_BYTES (50 * 1024 * 1024)  // 50MB cache file
-
 /* Simple CRC32 implementation */
 static uint32_t crc32(const char* data, size_t length) {
     uint32_t crc = 0xFFFFFFFF;
@@ -22,33 +18,6 @@ static uint32_t crc32(const char* data, size_t length) {
     
     return ~crc;
 }
-
-/* Hash table for fast lookups */
-#define HASH_TABLE_SIZE 8192
-
-typedef struct CacheNode {
-    CacheEntry entry;
-    struct CacheNode* next;
-    struct CacheNode* lru_prev;  // LRU doubly-linked list
-    struct CacheNode* lru_next;
-} CacheNode;
-
-struct CacheManager {
-    char* cache_file;
-    CacheNode* hash_table[HASH_TABLE_SIZE];
-    size_t entry_count;
-    size_t total_bytes;
-    size_t hits;
-    size_t misses;
-    
-    // LRU tracking
-    CacheNode* lru_head;  // Most recently used
-    CacheNode* lru_tail;  // Least recently used
-    
-    // Limits
-    size_t max_entries;
-    size_t max_bytes;
-};
 
 /* Simple hash function for filepath */
 static uint32_t hash_filepath(const char* filepath) {

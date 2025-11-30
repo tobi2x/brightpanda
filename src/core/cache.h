@@ -10,6 +10,10 @@
  * with LRU eviction policy when cache grows too large.
  */
 
+#define CACHE_VERSION 1
+#define DEFAULT_MAX_ENTRIES 50000     // 50k files
+#define DEFAULT_MAX_BYTES (50 * 1024 * 1024)  // 50MB cache file
+
 typedef struct {
     char* filepath;
     time_t mtime;           // Last modification time
@@ -19,6 +23,32 @@ typedef struct {
 } CacheEntry;
 
 typedef struct CacheManager CacheManager;
+/* Hash table for fast lookups */
+#define HASH_TABLE_SIZE 8192
+
+typedef struct CacheNode {
+    CacheEntry entry;
+    struct CacheNode* next;
+    struct CacheNode* lru_prev;  // LRU doubly-linked list
+    struct CacheNode* lru_next;
+} CacheNode;
+
+struct CacheManager {
+    char* cache_file;
+    CacheNode* hash_table[HASH_TABLE_SIZE];
+    size_t entry_count;
+    size_t total_bytes;
+    size_t hits;
+    size_t misses;
+    
+    // LRU tracking
+    CacheNode* lru_head;  // Most recently used
+    CacheNode* lru_tail;  // Least recently used
+    
+    // Limits
+    size_t max_entries;
+    size_t max_bytes;
+};
 
 /* Create a cache manager with optional size limit (0 = unlimited) */
 CacheManager* cache_manager_create(const char* cache_file);
